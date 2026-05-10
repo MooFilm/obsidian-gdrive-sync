@@ -1,6 +1,7 @@
 /**
- * OAuth 2.0 PKCE authentication for Google Drive.
- * Works on both desktop (localhost redirect) and mobile (manual code entry).
+ * OAuth 2.0 authentication for Google Drive.
+ * Uses client_secret (no PKCE needed for desktop/installed apps).
+ * Works on both desktop and mobile — user pastes code or full URL.
  */
 
 import { Notice, Platform } from "obsidian";
@@ -25,35 +26,10 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const REDIRECT_URI = "http://localhost:42813/callback";
 
-/**
- * Generate a cryptographically random string using Web Crypto API.
- */
-function generateRandomString(length: number): string {
-  const array = new Uint8Array(length);
-  crypto.getRandomValues(array);
-  return Array.from(array, (b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, length);
-}
-
-/**
- * Create a SHA-256 hash and return as base64url-encoded string (for PKCE).
- */
-async function sha256Base64Url(plain: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plain);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = new Uint8Array(hash);
-  let binary = "";
-  hashArray.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
 export class GoogleAuth {
   private config: AuthConfig;
   private tokenData: TokenData | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private codeVerifier: string = "";
 
   constructor(config: AuthConfig) {
     this.config = config;
@@ -94,42 +70,29 @@ export class GoogleAuth {
   }
 
   /**
-   * Start the OAuth 2.0 PKCE flow.
-   * Uses localhost redirect on all platforms.
-   * On mobile, the browser will show "can't reach" but the URL bar has the code.
+   * Start the OAuth 2.0 flow.
+   * Opens browser for user to authorize. No PKCE — uses client_secret instead.
    */
   async startAuthFlow(): Promise<void> {
     if (!this.config.clientId) {
       new Notice("Please set your Google OAuth Client ID in settings first.");
       return;
     }
-
-    this.codeVerifier = generateRandomString(64);
-    const codeChallenge = await sha256Base64Url(this.codeVerifier);
-    const state = generateRandomString(16);
+    if (!this.config.clientSecret) {
+      new Notice("Please set your Google OAuth Client Secret in settings first.");
+      return;
+    }
 
     const params = new URLSearchParams({
       client_id: this.config.clientId,
       redirect_uri: REDIRECT_URI,
       response_type: "code",
       scope: SCOPES,
-      code_challenge: codeChallenge,
-      code_challenge_method: "S256",
-      state: state,
       access_type: "offline",
       prompt: "consent",
     });
 
     const authUrl = `${GOOGLE_AUTH_URL}?${params.toString()}`;
-
-    // Store verifier for later use
-    const data = await this.config.loadData();
-    await this.config.saveData({
-      ...data,
-      pendingCodeVerifier: this.codeVerifier,
-      pendingRedirectUri: REDIRECT_URI,
-      pendingState: state,
-    });
 
     window.open(authUrl);
 
@@ -142,7 +105,7 @@ export class GoogleAuth {
       );
     } else {
       new Notice(
-        "Browser opened. After authorizing, copy the code from the redirect URL and paste it in settings.",
+        "Browser opened. After authorizing, copy the full URL from the redirect page and paste it in settings.",
         15000
       );
     }
@@ -166,44 +129,27 @@ export class GoogleAuth {
       }
     }
 
-    const data = await this.config.loadData();
-    const verifier = (data["pendingCodeVerifier"] as string) || this.codeVerifier;
-    const redirectUri =
-      (data["pendingRedirectUri"] as string) || REDIRECT_URI;
-
-    await this.exchangeCodeForTokens(code, verifier, redirectUri);
-
-    // Clean up pending data
-    delete data["pendingCodeVerifier"];
-    delete data["pendingRedirectUri"];
-    await this.config.saveData(data);
+    await this.exchangeCodeForTokens(code);
   }
-
-
 
   /**
    * Exchange authorization code for access + refresh tokens.
+   * Simple flow: client_id + client_secret + code + redirect_uri. No PKCE.
    */
-  private async exchangeCodeForTokens(
-    code: string,
-    codeVerifier: string,
-    redirectUri: string
-  ): Promise<void> {
+  private async exchangeCodeForTokens(code: string): Promise<void> {
     const body = new URLSearchParams({
       client_id: this.config.clientId,
       client_secret: this.config.clientSecret,
       code: code,
-      code_verifier: codeVerifier,
       grant_type: "authorization_code",
-      redirect_uri: redirectUri,
+      redirect_uri: REDIRECT_URI,
     });
 
-    console.log("GDrive Sync: Token exchange params:", {
+    console.log("GDrive Sync: Token exchange (no PKCE)", {
       client_id: this.config.clientId.substring(0, 20) + "...",
-      client_secret: this.config.clientSecret ? this.config.clientSecret.substring(0, 10) + "..." : "EMPTY!",
+      has_secret: !!this.config.clientSecret,
       code: code.substring(0, 15) + "...",
-      code_verifier: codeVerifier ? codeVerifier.substring(0, 10) + "..." : "EMPTY!",
-      redirect_uri: redirectUri,
+      redirect_uri: REDIRECT_URI,
     });
 
     try {
@@ -217,7 +163,7 @@ export class GoogleAuth {
 
       const json = await response.json();
 
-      console.log("GDrive Sync: Token response status:", response.status, "body:", JSON.stringify(json));
+      console.log("GDrive Sync: Token response:", response.status, JSON.stringify(json));
 
       if (!response.ok || json.error) {
         const errorDetail = json.error_description || json.error || `Status ${response.status}`;
@@ -294,7 +240,6 @@ export class GoogleAuth {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("GDrive Sync: Token refresh failed:", message);
-      // If refresh fails, clear tokens so user re-authenticates
       if (message.includes("invalid_grant")) {
         this.tokenData = null;
         await this.saveTokens();
@@ -315,10 +260,9 @@ export class GoogleAuth {
 
     if (!this.tokenData) return;
 
-    // Refresh 5 minutes before expiry
     const refreshIn = Math.max(
       this.tokenData.expires_at - Date.now() - 5 * 60 * 1000,
-      30_000 // At least 30 seconds from now
+      30_000
     );
 
     this.refreshTimer = setTimeout(async () => {
