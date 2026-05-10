@@ -23,8 +23,7 @@ export interface AuthConfig {
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
-const REDIRECT_URI_DESKTOP = "http://localhost:42813/callback";
-const REDIRECT_URI_MOBILE = "urn:ietf:wg:oauth:2.0:oob";
+const REDIRECT_URI = "http://localhost:42813/callback";
 
 /**
  * Generate a cryptographically random string using Web Crypto API.
@@ -96,6 +95,8 @@ export class GoogleAuth {
 
   /**
    * Start the OAuth 2.0 PKCE flow.
+   * Uses localhost redirect on all platforms.
+   * On mobile, the browser will show "can't reach" but the URL bar has the code.
    */
   async startAuthFlow(): Promise<void> {
     if (!this.config.clientId) {
@@ -107,12 +108,9 @@ export class GoogleAuth {
     const codeChallenge = await sha256Base64Url(this.codeVerifier);
     const state = generateRandomString(16);
 
-    const isMobile = Platform.isMobile;
-    const redirectUri = isMobile ? REDIRECT_URI_MOBILE : REDIRECT_URI_DESKTOP;
-
     const params = new URLSearchParams({
       client_id: this.config.clientId,
-      redirect_uri: redirectUri,
+      redirect_uri: REDIRECT_URI,
       response_type: "code",
       scope: SCOPES,
       code_challenge: codeChallenge,
@@ -124,36 +122,54 @@ export class GoogleAuth {
 
     const authUrl = `${GOOGLE_AUTH_URL}?${params.toString()}`;
 
-    if (isMobile) {
-      // On mobile, open URL and ask user to paste the code
-      window.open(authUrl);
+    // Store verifier for later use
+    const data = await this.config.loadData();
+    await this.config.saveData({
+      ...data,
+      pendingCodeVerifier: this.codeVerifier,
+      pendingRedirectUri: REDIRECT_URI,
+      pendingState: state,
+    });
+
+    window.open(authUrl);
+
+    if (Platform.isMobile) {
       new Notice(
-        "A browser window has opened. After authorizing, copy the code and paste it in the prompt.",
-        10000
+        "Safari จะเปิดขึ้น → Login Google → กด อนุญาต → " +
+        "หน้าจะ error (ปกติ) → copy URL ทั้งหมดจาก address bar → " +
+        "กลับมาวางใน Authorization Code",
+        15000
       );
-      // We'll handle the code via a modal prompt triggered from settings
-      // Store the verifier so exchangeCodeForTokens can use it later
-      const data = await this.config.loadData();
-      await this.config.saveData({
-        ...data,
-        pendingCodeVerifier: this.codeVerifier,
-        pendingRedirectUri: redirectUri,
-      });
     } else {
-      // On desktop, start a tiny HTTP server to capture the redirect
-      await this.startLocalServer(state);
-      window.open(authUrl);
+      new Notice(
+        "Browser opened. After authorizing, copy the code from the redirect URL and paste it in settings.",
+        15000
+      );
     }
   }
 
   /**
-   * Exchange an authorization code for tokens (used on mobile after user pastes code).
+   * Exchange an authorization code for tokens.
+   * Accepts either a raw code or the full redirect URL.
    */
-  async exchangeCodeManually(code: string): Promise<void> {
+  async exchangeCodeManually(codeOrUrl: string): Promise<void> {
+    // Auto-extract code from URL if user pasted the full redirect URL
+    let code = codeOrUrl.trim();
+    if (code.includes("code=")) {
+      try {
+        const url = new URL(code);
+        code = url.searchParams.get("code") || code;
+      } catch {
+        // Try regex as fallback
+        const match = code.match(/[?&]code=([^&]+)/);
+        if (match) code = match[1];
+      }
+    }
+
     const data = await this.config.loadData();
     const verifier = (data["pendingCodeVerifier"] as string) || this.codeVerifier;
     const redirectUri =
-      (data["pendingRedirectUri"] as string) || REDIRECT_URI_MOBILE;
+      (data["pendingRedirectUri"] as string) || REDIRECT_URI;
 
     await this.exchangeCodeForTokens(code, verifier, redirectUri);
 
@@ -163,32 +179,7 @@ export class GoogleAuth {
     await this.config.saveData(data);
   }
 
-  /**
-   * Start a local HTTP server on desktop to capture OAuth redirect.
-   */
-  private async startLocalServer(expectedState: string): Promise<void> {
-    // Use Obsidian's requestUrl as fallback approach:
-    // On desktop, we rely on the user being redirected to localhost.
-    // Since we can't create a real HTTP server in a browser-platform plugin,
-    // we'll use a polling approach instead.
-    //
-    // Store the verifier and wait for exchangeCodeManually to be called.
-    // The settings tab will provide a text input for the auth code on all platforms.
 
-    const data = await this.config.loadData();
-    await this.config.saveData({
-      ...data,
-      pendingCodeVerifier: this.codeVerifier,
-      pendingRedirectUri: REDIRECT_URI_DESKTOP,
-      pendingState: expectedState,
-    });
-
-    new Notice(
-      "Browser opened for Google authorization. After approving, you'll be redirected. " +
-        "Copy the authorization code from the URL and paste it in plugin settings.",
-      15000
-    );
-  }
 
   /**
    * Exchange authorization code for access + refresh tokens.
