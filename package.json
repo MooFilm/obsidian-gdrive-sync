@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-gdrive-sync",
+  "version": "1.0.0",
+  "description": "Near-realtime Google Drive sync for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "node esbuild.config.mjs --production"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "^1.5.0",
+    "typescript": "^5.3.3"
+  }
+}

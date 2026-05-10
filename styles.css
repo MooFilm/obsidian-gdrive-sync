@@ -1,0 +1,44 @@
+/* ═══════════════════════════════════════════════════════
+   Google Drive Sync — Obsidian Plugin Styles
+   ═══════════════════════════════════════════════════════ */
+
+/* Settings page instructions */
+.gdrive-sync-instructions {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 16px 16px 16px 8px;
+  margin-top: 8px;
+}
+
+.gdrive-sync-instructions ol {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.gdrive-sync-instructions li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.gdrive-sync-instructions li:last-child {
+  margin-bottom: 0;
+}
+
+/* Status bar styling */
+.status-bar-item {
+  font-size: 12px;
+}
+
+/* Wider text inputs in settings */
+.gdrive-sync-settings .setting-item-control input[type="text"] {
+  width: 300px;
+}
+
+/* Textarea styling */
+.gdrive-sync-settings .setting-item-control textarea {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  resize: vertical;
+}
