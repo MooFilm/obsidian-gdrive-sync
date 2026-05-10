@@ -71,16 +71,16 @@ export class GoogleAuth {
 
   /**
    * Start the OAuth 2.0 flow.
-   * Opens browser for user to authorize. No PKCE — uses client_secret instead.
+   * Returns the auth URL so the caller can display it appropriately.
    */
-  async startAuthFlow(): Promise<void> {
+  async startAuthFlow(): Promise<string | null> {
     if (!this.config.clientId) {
       new Notice("Please set your Google OAuth Client ID in settings first.");
-      return;
+      return null;
     }
     if (!this.config.clientSecret) {
       new Notice("Please set your Google OAuth Client Secret in settings first.");
-      return;
+      return null;
     }
 
     const params = new URLSearchParams({
@@ -92,23 +92,7 @@ export class GoogleAuth {
       prompt: "consent",
     });
 
-    const authUrl = `${GOOGLE_AUTH_URL}?${params.toString()}`;
-
-    window.open(authUrl);
-
-    if (Platform.isMobile) {
-      new Notice(
-        "Safari จะเปิดขึ้น → Login Google → กด อนุญาต → " +
-        "หน้าจะ error (ปกติ) → copy URL ทั้งหมดจาก address bar → " +
-        "กลับมาวางใน Authorization Code",
-        15000
-      );
-    } else {
-      new Notice(
-        "Browser opened. After authorizing, copy the full URL from the redirect page and paste it in settings.",
-        15000
-      );
-    }
+    return `${GOOGLE_AUTH_URL}?${params.toString()}`;
   }
 
   /**

@@ -95,7 +95,7 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
       .setDesc(isConnected ? "✅ Connected to Google Drive" : "❌ Not connected");
 
     if (!isConnected) {
-      // Connect button
+      // Connect button — generates auth URL and shows clickable link
       statusSetting.addButton((btn) =>
         btn
           .setButtonText("Connect Google Drive")
@@ -105,7 +105,44 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
               new Notice("Please enter your Client ID first.");
               return;
             }
-            await this.plugin.auth?.startAuthFlow();
+            if (!this.plugin.settings.clientSecret) {
+              new Notice("Please enter your Client Secret first.");
+              return;
+            }
+            const authUrl = await this.plugin.auth?.startAuthFlow();
+            if (!authUrl) return;
+
+            // Try opening browser (works on desktop, may fail on mobile)
+            window.open(authUrl);
+
+            // Also show a clickable link below (essential for iPad)
+            let linkContainer = containerEl.querySelector("#gdrive-auth-link") as HTMLDivElement;
+            if (!linkContainer) {
+              linkContainer = containerEl.createDiv({ attr: { id: "gdrive-auth-link" } });
+              // Insert after the status setting
+              statusSetting.settingEl.after(linkContainer);
+            }
+            linkContainer.empty();
+            linkContainer.style.cssText =
+              "padding: 12px 16px; margin: 8px 0; background: var(--background-secondary); border-radius: 8px;";
+
+            const instruction = linkContainer.createEl("p", {
+              text: "👆 ถ้า browser ไม่เปิดอัตโนมัติ กดลิงก์ด้านล่างนี้:",
+            });
+            instruction.style.cssText = "margin: 0 0 8px 0; font-size: 14px;";
+
+            const link = linkContainer.createEl("a", {
+              text: "🔗 เปิดหน้า Google Login",
+              href: authUrl,
+            });
+            link.style.cssText =
+              "display: block; color: var(--interactive-accent); font-weight: bold; font-size: 16px; word-break: break-all;";
+            link.setAttr("target", "_blank");
+
+            const hint = linkContainer.createEl("p", {
+              text: "หลัง Login → หน้าจะ error (ปกติ) → copy URL ทั้งหมดจาก address bar → วางด้านล่าง",
+            });
+            hint.style.cssText = "margin: 8px 0 0 0; font-size: 12px; opacity: 0.7;";
           })
       );
     } else {
@@ -125,18 +162,17 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Authorization Code")
       .setDesc(
-        "After authorizing in the browser, paste the authorization code here. " +
-          "On desktop, copy the 'code' parameter from the localhost redirect URL."
+        "วาง code หรือ URL ทั้งหมดจากหน้า redirect ได้เลย"
       )
       .addText((text) =>
-        text.setPlaceholder("Paste auth code here").onChange(() => {
+        text.setPlaceholder("วาง code หรือ URL ทั้งหมดที่นี่").onChange(() => {
           // No auto-save; handled by button
         })
       )
       .addButton((btn) =>
         btn.setButtonText("Submit Code").onClick(async () => {
           const input = containerEl.querySelector(
-            'input[placeholder="Paste auth code here"]'
+            'input[placeholder="วาง code หรือ URL ทั้งหมดที่นี่"]'
           ) as HTMLInputElement | null;
           const code = input?.value?.trim();
           if (!code) {
