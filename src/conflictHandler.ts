@@ -1,6 +1,9 @@
 /**
  * Conflict resolution logic for Google Drive sync.
  * Compares local modification time vs Drive modifiedTime.
+ *
+ * Includes rate-limiting to prevent conflict-file spam when
+ * multiple pull cycles detect the same conflicting file.
  */
 
 import { Notice, Vault, TFile } from "obsidian";
@@ -13,11 +16,26 @@ export interface ConflictResult {
 /**
  * Threshold in milliseconds: if both files are modified within this window,
  * treat as a conflict rather than simply picking the newest.
+ * Increased from 60s to 5 minutes to better accommodate real-world editing
+ * patterns where multiple devices are open simultaneously.
  */
-const CONFLICT_WINDOW_MS = 60_000; // 60 seconds
+const CONFLICT_WINDOW_MS = 300_000; // 5 minutes
+
+/**
+ * Rate-limit for creating conflict files: do not create a new conflict copy
+ * for the same path within this window.  Prevents the "12 conflict files in
+ * 5 minutes" problem.
+ */
+const CONFLICT_COOLDOWN_MS = 300_000; // 5 minutes
 
 export class ConflictHandler {
   private vault: Vault;
+
+  /**
+   * Tracks the last time a conflict file was created for each path.
+   * Prevents duplicate conflict copies when pulls happen in rapid succession.
+   */
+  private lastConflictTime: Map<string, number> = new Map();
 
   constructor(vault: Vault) {
     this.vault = vault;
@@ -65,12 +83,31 @@ export class ConflictHandler {
       return { action: "skip" };
     }
 
+    // ═══════════════════════════════════════════════════════
+    // CONFLICT RATE LIMITING
+    // If we already created a conflict copy for this file recently,
+    // skip to prevent spamming the vault with dozens of copies.
+    // ═══════════════════════════════════════════════════════
+    const lastConflict = this.lastConflictTime.get(localPath);
+    if (lastConflict && Date.now() - lastConflict < CONFLICT_COOLDOWN_MS) {
+      console.log(
+        `GDrive Sync: Skipping conflict for "${localPath}" — ` +
+          `already created a conflict copy ${Math.round((Date.now() - lastConflict) / 1000)}s ago.`
+      );
+      // Skip the remote change; the existing conflict copy + local version
+      // already capture both sides.  The user can reconcile later.
+      return { action: "skip" };
+    }
+
     // Create a conflict file
     const timestamp = this.formatTimestamp(new Date());
     const conflictPath = this.createConflictPath(localPath, timestamp);
 
     // Save the local version as a conflict file
     await this.vault.create(conflictPath, localContent);
+
+    // Record this conflict time for rate-limiting
+    this.lastConflictTime.set(localPath, Date.now());
 
     // Notify the user
     new Notice(

@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS: GDriveSyncSettings = {
   clientId: "",
   clientSecret: "",
   syncFolderName: "ObsidianVault",
-  pullIntervalSeconds: 10,
+  pullIntervalSeconds: 30,
   ignorePatterns: [
     ".obsidian/workspace",
     ".obsidian/workspace.json",
@@ -212,10 +212,10 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
     // Pull interval
     new Setting(containerEl)
       .setName("Pull Interval (seconds)")
-      .setDesc("How often to check Google Drive for changes. Min: 5, Max: 60.")
+      .setDesc("How often to check Google Drive for changes. Min: 15, Max: 300 (5 min).")
       .addSlider((slider) =>
         slider
-          .setLimits(5, 60, 1)
+          .setLimits(15, 300, 5)
           .setValue(this.plugin.settings.pullIntervalSeconds)
           .setDynamicTooltip()
           .onChange(async (value) => {

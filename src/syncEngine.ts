@@ -1,6 +1,6 @@
 /**
  * Core sync engine: push local changes to Drive, pull remote changes to vault.
- * Handles debouncing, offline queues, and write-back protection.
+ * Handles debouncing, offline queues, write-back protection, and active editing protection.
  */
 
 import { Notice, Vault, TFile, TAbstractFile, EventRef } from "obsidian";
@@ -32,6 +32,12 @@ interface SyncData {
 const DEBOUNCE_MS = 2000;
 const DEFAULT_MIME = "text/markdown";
 
+/**
+ * Grace period after a local edit: during this time, remote changes for the
+ * same file will be skipped to prevent overwriting the user's active work.
+ */
+const EDIT_GRACE_PERIOD_MS = 30_000; // 30 seconds
+
 export class SyncEngine {
   private vault: Vault;
   private driveApi: DriveAPI;
@@ -50,6 +56,14 @@ export class SyncEngine {
 
   private debounceTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private currentlyWriting: Set<string> = new Set();
+
+  /**
+   * Track the last time each file was locally edited (by the user).
+   * Used to enforce the edit grace period — remote changes arriving during
+   * this window will be deferred rather than overwriting the user's work.
+   */
+  private lastLocalEditTime: Map<string, number> = new Map();
+
   private isPushing = false;
   private isPulling = false;
   private pullInterval: ReturnType<typeof setInterval> | null = null;
@@ -220,6 +234,10 @@ export class SyncEngine {
 
     if (this.shouldIgnore(path)) return;
 
+    // Record the edit time — this is used by the pull logic to avoid
+    // overwriting files that the user is actively editing.
+    this.lastLocalEditTime.set(path, Date.now());
+
     // Cancel existing debounce for this file
     const existing = this.debounceTimers.get(path);
     if (existing) {
@@ -365,6 +383,27 @@ export class SyncEngine {
   }
 
   /**
+   * Check if a file is currently being actively edited by the user.
+   * A file is considered "actively edited" if:
+   *   1. There is a pending debounce timer for it, OR
+   *   2. It was last edited within the EDIT_GRACE_PERIOD_MS
+   */
+  private isActivelyEditing(path: string): boolean {
+    // Check for pending debounce (user just typed something, push hasn't fired yet)
+    if (this.debounceTimers.has(path)) {
+      return true;
+    }
+
+    // Check the edit grace period
+    const lastEdit = this.lastLocalEditTime.get(path);
+    if (lastEdit && Date.now() - lastEdit < EDIT_GRACE_PERIOD_MS) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Pull changes from Google Drive.
    */
   private async pull(): Promise<void> {
@@ -419,6 +458,14 @@ export class SyncEngine {
     if (removed || file?.trashed) {
       // File was deleted/trashed on Drive
       if (localPath) {
+        // Don't delete a file the user is actively editing!
+        if (this.isActivelyEditing(localPath)) {
+          console.log(
+            `GDrive Sync: Skipping remote delete for "${localPath}" — file is being edited locally.`
+          );
+          return;
+        }
+
         const existingFile = this.vault.getAbstractFileByPath(localPath);
         if (existingFile && existingFile instanceof TFile) {
           this.currentlyWriting.add(localPath);
@@ -449,6 +496,20 @@ export class SyncEngine {
 
     // Determine local path
     const targetPath = localPath || this.driveNameToLocalPath(file.name);
+
+    // ═══════════════════════════════════════════════════════
+    // ACTIVE EDITING PROTECTION
+    // If the user is currently editing this file, skip the
+    // remote change entirely. The local version will be pushed
+    // to Drive on the next push cycle, which resolves the conflict
+    // naturally (local wins because it's newer).
+    // ═══════════════════════════════════════════════════════
+    if (this.isActivelyEditing(targetPath)) {
+      console.log(
+        `GDrive Sync: Skipping remote change for "${targetPath}" — file is being edited locally.`
+      );
+      return;
+    }
 
     // Download the file content
     const content = await this.driveApi.downloadFile(fileId);
