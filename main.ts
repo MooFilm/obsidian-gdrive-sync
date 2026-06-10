@@ -61,6 +61,7 @@ export default class GDriveSyncPlugin extends Plugin {
       this.conflictHandler,
       {
         syncFolderName: this.settings.syncFolderName,
+        uploadOnly: this.settings.syncMode === "upload_only",
         pullIntervalSeconds: this.settings.pullIntervalSeconds,
         ignorePatterns,
         loadData: () => this.loadPluginData(),

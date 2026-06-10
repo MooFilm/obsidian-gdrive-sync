@@ -11,6 +11,7 @@ export type SyncStatus = "idle" | "syncing" | "error";
 
 export interface SyncEngineConfig {
   syncFolderName: string;
+  uploadOnly: boolean;
   pullIntervalSeconds: number;
   ignorePatterns: string[];
   loadData: () => Promise<Record<string, unknown>>;
@@ -145,11 +146,15 @@ export class SyncEngine {
 
     this.eventRefs.push(modifyRef, createRef, deleteRef, renameRef);
 
-    // Start periodic pull
-    this.pullInterval = setInterval(
-      () => this.pull(),
-      this.config.pullIntervalSeconds * 1000
-    );
+    // Start periodic pull — only in bidirectional mode
+    if (!this.config.uploadOnly) {
+      this.pullInterval = setInterval(
+        () => this.pull(),
+        this.config.pullIntervalSeconds * 1000
+      );
+    } else {
+      console.log("GDrive Sync: Upload-only mode — pull disabled.");
+    }
 
     this.setStatus("idle");
   }
@@ -407,6 +412,9 @@ export class SyncEngine {
    * Pull changes from Google Drive.
    */
   private async pull(): Promise<void> {
+    // Skip entirely in upload-only mode
+    if (this.config.uploadOnly) return;
+
     // Skip if currently pushing or pulling
     if (this.isPushing || this.isPulling) return;
     if (!this.syncData.pageToken || !this.syncData.folderId) return;

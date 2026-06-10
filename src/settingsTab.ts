@@ -5,10 +5,13 @@
 import { App, PluginSettingTab, Setting, TextAreaComponent, Notice } from "obsidian";
 import type GDriveSyncPlugin from "../main";
 
+export type SyncMode = "bidirectional" | "upload_only";
+
 export interface GDriveSyncSettings {
   clientId: string;
   clientSecret: string;
   syncFolderName: string;
+  syncMode: SyncMode;
   pullIntervalSeconds: number;
   ignorePatterns: string;
   showSyncStatusBar: boolean;
@@ -18,6 +21,7 @@ export const DEFAULT_SETTINGS: GDriveSyncSettings = {
   clientId: "",
   clientSecret: "",
   syncFolderName: "ObsidianVault",
+  syncMode: "bidirectional",
   pullIntervalSeconds: 30,
   ignorePatterns: [
     ".obsidian/workspace",
@@ -195,6 +199,25 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
     // ═══════════════════════════════════════
     containerEl.createEl("h2", { text: "Sync Configuration" });
 
+    // Sync Mode
+    new Setting(containerEl)
+      .setName("Sync Mode")
+      .setDesc(
+        "Upload Only = อัพโหลดอย่างเดียว ไม่ดึงข้อมูลจาก Drive กลับมา (แนะนำสำหรับ PC ที่ใช้พิมพ์งาน). " +
+        "Bidirectional = ซิงค์สองทาง อัพโหลด+ดาวน์โหลด (แนะนำสำหรับ iPad/มือถือ)."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("upload_only", "📤 Upload Only (อัพโหลดอย่างเดียว)")
+          .addOption("bidirectional", "🔄 Bidirectional (ซิงค์สองทาง)")
+          .setValue(this.plugin.settings.syncMode)
+          .onChange(async (value) => {
+            this.plugin.settings.syncMode = value as "bidirectional" | "upload_only";
+            await this.plugin.saveSettings();
+            this.display(); // Refresh to show/hide pull interval
+          })
+      );
+
     // Sync folder name
     new Setting(containerEl)
       .setName("Drive Folder Name")
@@ -209,20 +232,22 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
           })
       );
 
-    // Pull interval
-    new Setting(containerEl)
-      .setName("Pull Interval (seconds)")
-      .setDesc("How often to check Google Drive for changes. Min: 15, Max: 300 (5 min).")
-      .addSlider((slider) =>
-        slider
-          .setLimits(15, 300, 5)
-          .setValue(this.plugin.settings.pullIntervalSeconds)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.pullIntervalSeconds = value;
-            await this.plugin.saveSettings();
-          })
-      );
+    // Pull interval — only shown for bidirectional mode
+    if (this.plugin.settings.syncMode === "bidirectional") {
+      new Setting(containerEl)
+        .setName("Pull Interval (seconds)")
+        .setDesc("How often to check Google Drive for changes. Min: 15, Max: 300 (5 min).")
+        .addSlider((slider) =>
+          slider
+            .setLimits(15, 300, 5)
+            .setValue(this.plugin.settings.pullIntervalSeconds)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+              this.plugin.settings.pullIntervalSeconds = value;
+              await this.plugin.saveSettings();
+            })
+        );
+    }
 
     // Ignore patterns
     new Setting(containerEl)
