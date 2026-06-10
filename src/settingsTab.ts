@@ -287,9 +287,13 @@ export class GDriveSyncSettingTab extends PluginSettingTab {
     containerEl.createEl("h2", { text: "Actions" });
 
     // Full sync button
+    const fullSyncDesc = this.plugin.settings.syncMode === "upload_only"
+      ? "📤 อัพโหลดไฟล์ทั้งหมดขึ้น Google Drive (Upload all vault files)"
+      : "🔄 ซิงค์ไฟล์ทั้งหมดกับ Google Drive — อัพและดาวน์ (Full bidirectional sync)";
+
     new Setting(containerEl)
       .setName("Full Sync")
-      .setDesc("Upload all vault files to Drive and pull all remote changes.")
+      .setDesc(fullSyncDesc)
       .addButton((btn) =>
         btn
           .setButtonText("Run Full Sync")

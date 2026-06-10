@@ -159,6 +159,7 @@ export default class GDriveSyncPlugin extends Plugin {
 
   /**
    * Save plugin settings to disk.
+   * Restarts SyncEngine if syncMode or other sync settings changed.
    */
   async saveSettings(): Promise<void> {
     const data = await this.loadPluginData();
@@ -174,6 +175,62 @@ export default class GDriveSyncPlugin extends Plugin {
         saveData: (d) => this.savePluginData(d),
       });
       await this.auth.initialize();
+    }
+
+    // Restart SyncEngine with updated config (handles syncMode changes)
+    await this.restartSyncEngine();
+  }
+
+  /**
+   * Stop the current SyncEngine and create a new one with latest settings.
+   */
+  private async restartSyncEngine(): Promise<void> {
+    // Stop old engine
+    if (this.syncEngine) {
+      this.syncEngine.stop();
+      const refs = this.syncEngine.getEventRefs();
+      for (const ref of refs) {
+        this.app.vault.offref(ref);
+      }
+      this.syncEngine = null;
+    }
+
+    if (!this.auth || !this.driveApi || !this.conflictHandler) return;
+
+    // Create new engine with latest settings
+    const ignorePatterns = this.settings.ignorePatterns
+      .split("\n")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    this.syncEngine = new SyncEngine(
+      this.app.vault,
+      this.driveApi,
+      this.conflictHandler,
+      {
+        syncFolderName: this.settings.syncFolderName,
+        uploadOnly: this.settings.syncMode === "upload_only",
+        pullIntervalSeconds: this.settings.pullIntervalSeconds,
+        ignorePatterns,
+        loadData: () => this.loadPluginData(),
+        saveData: (data) => this.savePluginData(data),
+        onStatusChange: (status, message) =>
+          this.updateStatusBar(status, message),
+      }
+    );
+
+    // Re-initialize and start if authenticated
+    if (this.auth.isAuthenticated()) {
+      try {
+        await this.syncEngine.initialize();
+        this.syncEngine.start();
+        const mode = this.settings.syncMode === "upload_only"
+          ? "📤 Upload Only"
+          : "🔄 Bidirectional";
+        new Notice(`GDrive Sync: Restarted in ${mode} mode`);
+      } catch (err) {
+        console.error("GDrive Sync: Failed to restart sync engine:", err);
+      }
     }
   }
 
